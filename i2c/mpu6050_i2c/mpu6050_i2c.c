@@ -30,18 +30,61 @@
    GND (pin 38)  -> GND on MPU6050 board
 */
 
+//****************************************
+#define	SMPLRT_DIV		0x19	//陀螺仪采样率，典型值：0x07(125Hz)
+#define	CONFIG			0x1A	//低通滤波频率，典型值：0x06(5Hz)
+#define	GYRO_CONFIG		0x1B	//陀螺仪自检及测量范围，典型值：0x18(不自检，2000deg/s)
+#define	ACCEL_CONFIG	0x1C	//加速计自检、测量范围及高通滤波频率，典型值：0x01(不自检，2G，5Hz)
+#define	ACCEL_XOUT_H	0x3B
+#define	ACCEL_XOUT_L	0x3C
+#define	ACCEL_YOUT_H	0x3D
+#define	ACCEL_YOUT_L	0x3E
+#define	ACCEL_ZOUT_H	0x3F
+#define	ACCEL_ZOUT_L	0x40
+#define	TEMP_OUT_H		0x41
+#define	TEMP_OUT_L		0x42
+#define	GYRO_XOUT_H		0x43
+#define	GYRO_XOUT_L		0x44	
+#define	GYRO_YOUT_H		0x45
+#define	GYRO_YOUT_L		0x46
+#define	GYRO_ZOUT_H		0x47
+#define	GYRO_ZOUT_L		0x48
+#define	PWR_MGMT_1		0x6B	//电源管理，典型值：0x00(正常启用)
+#define	WHO_AM_I		0x75	//IIC地址寄存器(默认数值0x68，只读)
+#define	SlaveAddress	0x68	//IIC从机地址
+
+#define MPU_60X0_PWR_MGMT_1_REG_ADDR        0x6B  
+#define MPU_60X0_USER_CTRL_REG_ADDR         0x6A  
+#define MPU_60X0_SMPLRT_DIV_REG_ADDR        0x19  
+#define MPU_60X0_CONFIG_REG_ADDR            0x1A  
+#define MPU_60X0_GYRO_CONFIG_REG_ADDR       0x1B  
+#define MPU_60X0_ACCEL_CONFIG_REG_ADDR      0x1C  
+#define MPU_60X0_FIFO_EN_REG_ADDR           0x23
+
+#define MPU_60X0_RESET_REG_VALU             0x80  
+#define MPU_60X0_PWR_MGMT_1_REG_VALU        0x01    // Enable temperature sensor, PLL with X axis gyroscope reference  
+#define MPU_60X0_USER_CTRL_REG_VALU         0x45    // Enable FIFO. Reset FIFO and signal paths for all sensors  
+#define MPU_60X0_SMPLRT_DIV_REG_VALU        0x00    // DLPF_CFG is 0x01, so Gyroscope Output Rate = 1kHz, divided by 1, still 1kHz  
+#define MPU_60X0_CONFIG_REG_VALU            0x03    // 184Hz 2.0ms 188Hz 1.9ms 1kHz. So there will be 6x2 bytes new data in FIFO every 1ms  
+#define MPU_60X0_GYRO_CONFIG_REG_VALU       0x08    // Gyroscope works at 500dps. If selftest is needed, REMEMBER to put this to 250dps  
+#define MPU_60X0_ACCEL_CONFIG_REG_VALU      0x08    // Accelerometer works at 4g range. If selftest is needed, REMEMBER to put this to 8g range  
+#define MPU_60X0_FIFO_EN_REG_VALU           0x78    // Only enable accel and gyro  
+
 // By default these devices  are on bus address 0x68
-static int addr = 0x68;
+static int addr = SlaveAddress;
 
 #ifdef i2c_default
 static void mpu6050_reset() {
     // Two byte reset. First byte register, second byte data
     // There are a load more options to set up the device in different ways that could be added here
-    uint8_t buf[] = {0x6B, 0x80};
+    uint8_t buf[] = {MPU_60X0_PWR_MGMT_1_REG_ADDR, MPU_60X0_RESET_REG_VALU};
+    i2c_write_blocking(i2c_default, addr, buf, 2, false);
+    sleep_ms(50); // 复位后等待50ms
+    buf[1] = MPU_60X0_PWR_MGMT_1_REG_VALU;
     i2c_write_blocking(i2c_default, addr, buf, 2, false);
 }
 
-static void mpu6050_read_raw(int16_t accel[3], int16_t gyro[3], int16_t *temp) {
+static void mpu6050_read_raw(int16_t accel[3], int16_t gyro[3], int16_t *temp, uint8_t *whoami) {
     // For this particular device, we send the device the register we want to read
     // first, then subsequently read from the device. The register is auto incrementing
     // so we don't need to keep sending the register we want, just the first.
@@ -74,6 +117,14 @@ static void mpu6050_read_raw(int16_t accel[3], int16_t gyro[3], int16_t *temp) {
     i2c_read_blocking(i2c_default, addr, buffer, 2, false);  // False - finished with bus
 
     *temp = buffer[0] << 8 | buffer[1];
+
+    // Now whoami from reg 0x75 for 1 bytes
+    // The register is auto incrementing on each read
+    val = 0x75;
+    i2c_write_blocking(i2c_default, addr, &val, 1, true);
+    i2c_read_blocking(i2c_default, addr, buffer, 1, false);  // False - finished with bus
+
+    *whoami = buffer[0];
 }
 #endif
 
@@ -86,7 +137,8 @@ int main() {
     printf("Hello, MPU6050! Reading raw data from registers...\n");
 
     // This example will use I2C0 on the default SDA and SCL pins (4, 5 on a Pico)
-    i2c_init(i2c_default, 400 * 1000);
+    i2c_init(i2c_default, 100 * 1000);
+    sleep_ms(10); // I2C初始化后等待10ms，再操作IIC
     gpio_set_function(PICO_DEFAULT_I2C_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C);
     gpio_pull_up(PICO_DEFAULT_I2C_SDA_PIN);
@@ -97,9 +149,10 @@ int main() {
     mpu6050_reset();
 
     int16_t acceleration[3], gyro[3], temp;
+    uint8_t whoami;
 
     while (1) {
-        mpu6050_read_raw(acceleration, gyro, &temp);
+        mpu6050_read_raw(acceleration, gyro, &temp, &whoami);
 
         // These are the raw numbers from the chip, so will need tweaking to be really useful.
         // See the datasheet for more information
@@ -108,6 +161,7 @@ int main() {
         // Temperature is simple so use the datasheet calculation to get deg C.
         // Note this is chip temperature.
         printf("Temp. = %f\n", (temp / 340.0) + 36.53);
+        printf("who am i is : %d\n", whoami);
 
         sleep_ms(100);
     }
